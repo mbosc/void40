@@ -45,6 +45,8 @@ corner_relief_inset = [3.81, 3.77];         // center inset from outer edge
 // Four internal mounting / screw features seen in the top STL.
 center_mount_hole_d_bottom = 2.95;
 center_mount_hole_d_top = 6.00;
+center_mount_hole_straight_height = 2.0;
+center_mount_hole_flare_height = plate_thickness - center_mount_hole_straight_height;
 center_mount_positions = [
     [-2 * key_pitch, -1 * key_pitch],
     [ 2 * key_pitch, -1 * key_pitch],
@@ -57,7 +59,7 @@ bottom_floor_thickness = 2.4;
 bottom_wall_thickness = 3.0;
 bottom_height = 19.0;           // maximum raw shell height before the side-profile slope trim
 bottom_rim_height = 1.8;        // locating rim that keys into the top underside reliefs
-bottom_rim_embed = 1.5;         // extra material below the mating plane so the rim is fully supported
+bottom_rim_embed = 0.05;        // tiny overlap into the body to avoid coincident surfaces
 bottom_rim_clearance = 0.20;
 
 // The original bottom is angled front-to-back.
@@ -65,16 +67,26 @@ bottom_front_height = 12.0;
 bottom_back_height = 19.0;
 
 bottom_post_d = 8.0;
-bottom_post_hole_d = 3.2;
-bottom_post_counterbore_d = 6.4;
-bottom_post_counterbore_h = 2.2;
+// The original bottom uses solid posts with top-side blind pilot holes,
+// not through-holes / bottom counterbores.
+bottom_post_hole_d = 2.95;
+bottom_post_hole_depth = 9.25;
 
-// Corner screw posts inferred from the original bottom STL.
+// The original bottom's upper perimeter wall leans inward under the lip.
+// Approximate that with extra inner support wedges under the upper lip.
+bottom_underlip_inner_extension_lower = 0.45;
+bottom_underlip_inner_extension_upper = 0.95;
+
+// Corner bolt geometry in the original bottom is mostly perimeter wall,
+// with an added inward quarter-cylinder support around each hole.
 corner_bolt_enabled = true;
 corner_bolt_outer_d = 5.6;
+corner_bolt_collar_d = 8.4;
 corner_bolt_hole_d = 2.95;
 corner_bolt_counterbore_d = 5.8;
 corner_bolt_counterbore_h = 2.2;
+corner_underlip_gusset_enabled = false;
+corner_underlip_gusset_d = 3.0;
 
 // Arduino Pro Micro / controller lodging, inferred from the original bottom STL.
 // These are anchored from the left and north case edges so they follow width changes.
@@ -90,6 +102,7 @@ controller_inner_window_size = [19.78, 5.55];
 controller_inner_window_bottom_z = 5.06;
 controller_inner_window_center_from_north = 3.25;
 controller_inner_window_depth = 2.25;
+controller_inner_window_inboard_relief_depth = 0.60;
 
 controller_outer_window_size = [9.60, 3.70];
 controller_outer_window_bottom_z = 7.04;
@@ -155,6 +168,10 @@ function bottom_inner_size() = [
 ];
 
 function bottom_inner_corner_radius() = max(outer_corner_radius - bottom_wall_thickness, 0);
+function bottom_underlip_inner_size() = [
+    outer_size()[0] - 2 * wall_thickness,
+    outer_size()[1] - 2 * wall_thickness
+];
 
 function left_edge_x() = -outer_size()[0] / 2;
 function right_edge_x() = outer_size()[0] / 2;
@@ -209,13 +226,17 @@ module switch_cutouts_3d() {
 }
 
 module center_mount_holes_3d() {
-    for (p = center_mount_positions)
+    for (p = center_mount_positions) {
         translate([p[0], p[1], 0])
+            cylinder(h = center_mount_hole_straight_height, d = center_mount_hole_d_bottom);
+
+        translate([p[0], p[1], center_mount_hole_straight_height])
             cylinder(
-                h = plate_thickness,
+                h = center_mount_hole_flare_height,
                 d1 = center_mount_hole_d_bottom,
                 d2 = center_mount_hole_d_top
             );
+    }
 }
 
 module corner_relief_holes_3d() {
@@ -288,13 +309,49 @@ module bottom_posts() {
             cylinder(h = bottom_height - bottom_floor_thickness, d = bottom_post_d);
 }
 
+module bottom_underlip_support() {
+    translate([0, 0, bottom_floor_thickness])
+        linear_extrude(height = bottom_height - bottom_floor_thickness)
+            difference() {
+                rounded_rect_2d(outer_size(), outer_corner_radius);
+                square(bottom_underlip_inner_size(), center = true);
+            }
+}
+
+module bottom_underlip_inner_extensions() {
+    lower = bottom_underlip_inner_extension_lower;
+    upper = bottom_underlip_inner_extension_upper;
+    z0 = bottom_floor_thickness;
+    z1 = bottom_height - 0.01;
+    x_span = outer_size()[0] - 2 * wall_thickness;
+
+    union() {
+        hull() {
+            translate([0, north_edge_y() - wall_thickness - lower / 2, z0])
+                cube([x_span, lower, 0.01], center = true);
+            translate([0, north_edge_y() - wall_thickness - upper / 2, z1])
+                cube([x_span, upper, 0.01], center = true);
+        }
+
+        hull() {
+            translate([0, south_edge_y() + wall_thickness + lower / 2, z0])
+                cube([x_span, lower, 0.01], center = true);
+            translate([0, south_edge_y() + wall_thickness + upper / 2, z1])
+                cube([x_span, upper, 0.01], center = true);
+        }
+    }
+}
+
+function bottom_top_surface_z(y) = bottom_side_slope_enabled
+    ? bottom_mid_height() + tan(bottom_tilt_angle()) * y
+    : bottom_height;
+
 module bottom_post_holes() {
     for (p = center_mount_positions) {
-        translate([p[0], p[1], -0.01])
-            cylinder(h = bottom_height + bottom_rim_height + 0.02, d = bottom_post_hole_d);
+        hole_floor_z = max(bottom_top_surface_z(p[1]) - bottom_post_hole_depth, bottom_floor_thickness);
 
-        translate([p[0], p[1], -0.01])
-            cylinder(h = bottom_post_counterbore_h + 0.02, d = bottom_post_counterbore_d);
+        translate([p[0], p[1], hole_floor_z])
+            cylinder(h = bottom_height - hole_floor_z + 0.02, d = bottom_post_hole_d);
     }
 }
 
@@ -302,9 +359,22 @@ module corner_bolt_posts() {
     if (corner_bolt_enabled) {
         pos = corner_relief_pos();
         for (sx = [-1, 1])
-            for (sy = [-1, 1])
-                translate([sx * pos[0], sy * pos[1], 0])
-                    cylinder(h = bottom_height, d = corner_bolt_outer_d);
+            for (sy = [-1, 1]) {
+                cx = sx * pos[0];
+                cy = sy * pos[1];
+
+                linear_extrude(height = bottom_height)
+                    intersection() {
+                        translate([cx, cy])
+                            circle(d = corner_bolt_collar_d);
+
+                        translate([
+                            cx - sx * corner_bolt_collar_d / 4,
+                            cy - sy * corner_bolt_collar_d / 4
+                        ])
+                            square([corner_bolt_collar_d / 2, corner_bolt_collar_d / 2], center = true);
+                    }
+            }
     }
 }
 
@@ -319,6 +389,37 @@ module corner_bolt_holes() {
                 translate([sx * pos[0], sy * pos[1], -0.01])
                     cylinder(h = corner_bolt_counterbore_h + 0.02, d = corner_bolt_counterbore_d);
             }
+    }
+}
+
+module corner_underlip_gussets() {
+    if (corner_bolt_enabled && corner_underlip_gusset_enabled) {
+        pos = corner_relief_pos();
+        bar_half = corner_underlip_gusset_d / 2;
+        translate([0, 0, bottom_floor_thickness])
+            linear_extrude(height = bottom_height - bottom_floor_thickness)
+                intersection() {
+                    rounded_rect_2d(outer_size(), outer_corner_radius);
+
+                    union() {
+                        for (sx = [-1, 1])
+                            for (sy = [-1, 1]) {
+                                px = sx * pos[0];
+                                py = sy * pos[1];
+                                wx = sx * (outer_size()[0] / 2 - wall_thickness / 2);
+                                wy = sy * (outer_size()[1] / 2 - wall_thickness / 2);
+
+                                translate([px, py])
+                                    circle(d = corner_underlip_gusset_d);
+
+                                translate([(px + wx) / 2, py])
+                                    square([abs(wx - px) + corner_underlip_gusset_d, corner_underlip_gusset_d], center = true);
+
+                                translate([px, (py + wy) / 2])
+                                    square([corner_underlip_gusset_d, abs(wy - py) + corner_underlip_gusset_d], center = true);
+                            }
+                    }
+                }
     }
 }
 
@@ -378,6 +479,22 @@ module controller_window_3d() {
             ])
                 rotate([90, 0, 0])
                     linear_extrude(height = controller_inner_window_depth, center = true)
+                        controller_large_window_profile_2d();
+
+            // Extend the inner cavity slightly farther inward so the
+            // under-lip support wall does not leave a thin blocker strip in
+            // front of the controller / port window.
+            translate([
+                controller_window_center()[0],
+                y_from_north(
+                    controller_inner_window_center_from_north
+                    + controller_inner_window_depth / 2
+                    + controller_inner_window_inboard_relief_depth / 2
+                ),
+                controller_inner_window_bottom_z + controller_inner_window_size[1] / 2
+            ])
+                rotate([90, 0, 0])
+                    linear_extrude(height = controller_inner_window_inboard_relief_depth, center = true)
                         controller_large_window_profile_2d();
 
             // Smaller outer port slot.
@@ -464,6 +581,9 @@ module bottom_core() {
     difference() {
         union() {
             bottom_shell();
+            bottom_underlip_support();
+            bottom_underlip_inner_extensions();
+            corner_underlip_gussets();
             bottom_posts();
             corner_bolt_posts();
             controller_supports();

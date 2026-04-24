@@ -1,0 +1,6 @@
+.DS_Store
+*.png
+*.svg
+_*.scad
+**/.pi
+**/print_tests
