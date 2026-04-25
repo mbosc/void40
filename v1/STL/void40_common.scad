@@ -1,3 +1,5 @@
+use <psp2000_joystick.scad>;
+
 // VOID40 parametric reconstruction helpers
 // Derived from the two STL files in this folder.
 // Top: feature-driven reconstruction from inferred primitives.
@@ -54,17 +56,46 @@ center_mount_positions = [
     [ 2 * key_pitch,  1 * key_pitch]
 ];
 
+// ---- Optional top-side control bump ----
+// Partial north-side pod for a PSP-style joystick and four extra buttons.
+top_mod_bump_enabled = true;
+top_mod_button_indices = [6, 7, 8, 9];   // Y U I O on the 12-column grid
+top_mod_controls_y_offset = 12.0;
+top_mod_bump_south_overlap = 8.0;
+top_mod_bump_lower_margin_x = 16.0;
+top_mod_bump_upper_margin_x = 11.0;
+top_mod_bump_lower_depth = 35.0;
+top_mod_bump_upper_depth = 24.0;
+top_mod_bump_lower_corner_r = 6.0;
+top_mod_bump_upper_corner_r = 5.0;
+// Keep this as a low top-frame extension; control bodies live in the bottom.
+top_mod_bump_total_height = top_total_height;
+top_mod_access_opening_width_margin = 10.0;
+top_mod_joystick_clearance_xy = 0.45;
+top_mod_joystick_clearance_z = 0.45;
+top_mod_joystick_stick_offset = [1.5, 0];
+
 // ---- Bottom approximation ----
 bottom_floor_thickness = 2.4;
 bottom_wall_thickness = 3.0;
-bottom_height = 19.0;           // maximum raw shell height before the side-profile slope trim
-bottom_rim_height = 1.8;        // locating rim that keys into the top underside reliefs
-bottom_rim_embed = 0.05;        // tiny overlap into the body to avoid coincident surfaces
-bottom_rim_clearance = 0.20;
 
 // The original bottom is angled front-to-back.
 bottom_front_height = 12.0;
 bottom_back_height = 19.0;
+
+// Raw extrusion height before the side-profile slope trim.  The control bump
+// extends past the original north edge, so this must grow enough for the
+// sloped top plane to continue under that bump instead of leaving the rim
+// floating above a flat 19 mm wall.
+bottom_height = bottom_back_height
+    + (top_mod_bump_enabled
+        ? max(top_mod_bump_lower_depth - top_mod_bump_south_overlap, 0)
+            * (bottom_back_height - bottom_front_height) / outer_size()[1]
+        : 0)
+    + 0.35;
+bottom_rim_height = 1.8;        // locating rim that keys into the top underside reliefs
+bottom_rim_embed = 0.05;        // tiny overlap into the body to avoid coincident surfaces
+bottom_rim_clearance = 0.20;
 
 bottom_post_d = 8.0;
 // The original bottom uses solid posts with top-side blind pilot holes,
@@ -193,6 +224,46 @@ function controller_window_center() = [
     north_edge_y()
 ];
 
+function top_mod_button_x_positions() = [for (i = top_mod_button_indices) switch_x_positions()[i]];
+function top_mod_controls_y() = north_edge_y() + top_mod_controls_y_offset;
+function top_mod_joystick_center() = [
+    (switch_x_positions()[4] + switch_x_positions()[5]) / 2,
+    top_mod_controls_y()
+];
+function top_mod_all_control_xs() = concat([top_mod_joystick_center()[0]], top_mod_button_x_positions());
+function top_mod_control_span_x() = max(top_mod_all_control_xs()) - min(top_mod_all_control_xs());
+function top_mod_bump_x_center() = (max(top_mod_all_control_xs()) + min(top_mod_all_control_xs())) / 2;
+function top_mod_bump_lower_center() = [
+    top_mod_bump_x_center(),
+    north_edge_y() + top_mod_bump_lower_depth / 2 - top_mod_bump_south_overlap
+];
+function top_mod_bump_upper_center() = [
+    top_mod_bump_x_center(),
+    north_edge_y() + top_mod_bump_upper_depth / 2 - top_mod_bump_south_overlap
+];
+function top_mod_bump_lower_size() = [
+    top_mod_control_span_x() + 2 * top_mod_bump_lower_margin_x,
+    top_mod_bump_lower_depth
+];
+function top_mod_bump_upper_size() = [
+    top_mod_control_span_x() + 2 * top_mod_bump_upper_margin_x,
+    top_mod_bump_upper_depth
+];
+function top_mod_bump_inner_lower_size(wall = wall_thickness) = [
+    max(top_mod_bump_lower_size()[0] - 2 * wall, 0.01),
+    max(top_mod_bump_lower_size()[1] - 2 * wall, 0.01)
+];
+function top_mod_bump_inner_upper_size(wall = wall_thickness) = [
+    max(top_mod_bump_upper_size()[0] - 2 * wall, 0.01),
+    max(top_mod_bump_upper_size()[1] - 2 * wall, 0.01)
+];
+function top_mod_access_opening_width() = max(
+    top_mod_bump_upper_size()[0] - 2 * top_mod_access_opening_width_margin,
+    8.0
+);
+function top_mod_joystick_origin_xy() = top_mod_joystick_center() - top_mod_joystick_stick_offset;
+function top_mod_joystick_origin_z() = -0.01;
+
 module rounded_rect_2d(size = [10, 10], r = 0) {
     if (r <= 0)
         square(size, center = true);
@@ -210,6 +281,41 @@ module rounded_rect_2d(size = [10, 10], r = 0) {
 module slot_2d(length, width, r = -1) {
     rr = (r < 0) ? width / 2 : r;
     rounded_rect_2d([length, width], rr);
+}
+
+module case_outer_2d(clearance = 0) {
+    union() {
+        offset(delta = clearance)
+            rounded_rect_2d(outer_size(), outer_corner_radius);
+
+        if (top_mod_bump_enabled)
+            top_mod_bump_footprint_2d(clearance = clearance);
+    }
+}
+
+module case_inner_2d(wall = wall_thickness, clearance = 0) {
+    offset(delta = clearance)
+        offset(delta = -wall)
+            case_outer_2d();
+}
+
+module top_opening_2d() {
+    // One rational interior offset from the combined main-rectangle + bump shell.
+    // This avoids slivers where the bump and the original top wall meet.
+    case_inner_2d(wall = wall_thickness);
+}
+
+module perimeter_locating_ring_2d(clearance = 0) {
+    outer_inset = underside_relief_slot_edge_offset - underside_relief_slot_width / 2 + clearance;
+    inner_inset = underside_relief_slot_edge_offset + underside_relief_slot_width / 2 - clearance;
+
+    if (outer_inset < inner_inset)
+        difference() {
+            offset(delta = -outer_inset)
+                case_outer_2d();
+            offset(delta = -inner_inset)
+                case_outer_2d();
+        }
 }
 
 module switch_cutouts_3d() {
@@ -248,33 +354,94 @@ module corner_relief_holes_3d() {
 }
 
 module underside_relief_slots_2d(clearance = 0) {
-    w = max(underside_relief_w(clearance), 0.01);
-    hlen = max(underside_relief_h_length(clearance), 0.01);
-    vlen = max(underside_relief_v_length(clearance), 0.01);
-    x_slot = outer_size()[0] / 2 - underside_relief_slot_edge_offset;
-    y_slot = outer_size()[1] / 2 - underside_relief_slot_edge_offset;
+    perimeter_locating_ring_2d(clearance = clearance);
+}
 
-    union() {
-        for (sy = [-1, 1])
-            translate([0, sy * y_slot])
-                square([hlen, w], center = true);
+module top_mod_bump_footprint_2d(clearance = 0) {
+    translate(top_mod_bump_lower_center())
+        rounded_rect_2d(
+            top_mod_bump_lower_size() + [2 * clearance, 2 * clearance],
+            top_mod_bump_lower_corner_r + clearance
+        );
+}
 
-        for (sx = [-1, 1])
-            translate([sx * x_slot, 0])
-                square([w, vlen], center = true);
+module top_mod_bump_inner_2d(wall = wall_thickness, clearance = 0) {
+    translate(top_mod_bump_lower_center())
+        rounded_rect_2d(
+            top_mod_bump_inner_lower_size(wall) + [2 * clearance, 2 * clearance],
+            max(top_mod_bump_lower_corner_r - wall, 0) + clearance
+        );
+}
+
+module top_mod_bump_outer() {
+    if (top_mod_bump_enabled)
+        union() {
+            // Low plate extension: the controls pass through this into the bottom.
+            linear_extrude(height = plate_thickness)
+                top_mod_bump_footprint_2d();
+
+            // Perimeter lip/wall only; no high enclosed top-only pod.
+            translate([0, 0, plate_thickness])
+                linear_extrude(height = top_mod_bump_total_height - plate_thickness)
+                    difference() {
+                        top_mod_bump_footprint_2d();
+                        top_mod_bump_inner_2d();
+                    }
+        }
+}
+
+module top_mod_access_opening_3d() {
+    if (top_mod_bump_enabled) {
+        opening_h = top_mod_bump_total_height - plate_thickness + 0.02;
+        translate([
+            top_mod_bump_x_center(),
+            north_edge_y() + wall_thickness / 2,
+            plate_thickness + opening_h / 2 - 0.01
+        ])
+            cube([
+                top_mod_access_opening_width(),
+                wall_thickness + 2 * top_mod_bump_south_overlap + 0.5,
+                opening_h
+            ], center = true);
     }
+}
+
+module top_mod_button_cutouts_3d() {
+    if (top_mod_bump_enabled)
+        for (x = top_mod_button_x_positions()) {
+            translate([x, top_mod_controls_y(), 0])
+                linear_extrude(height = switch_cutout_relief_height + 0.01)
+                    square([switch_cutout_lower, switch_cutout_lower], center = true);
+
+            translate([x, top_mod_controls_y(), switch_cutout_relief_height])
+                linear_extrude(height = switch_cutout_plate_height + 0.01)
+                    square([switch_cutout_upper, switch_cutout_upper], center = true);
+        }
+}
+
+module top_mod_joystick_keepout_3d() {
+    if (top_mod_bump_enabled)
+        translate([
+            top_mod_joystick_origin_xy()[0],
+            top_mod_joystick_origin_xy()[1],
+            top_mod_joystick_origin_z()
+        ])
+            psp2000_joystick_envelope(
+                xy_clearance = top_mod_joystick_clearance_xy,
+                z_clearance = top_mod_joystick_clearance_z
+            );
 }
 
 module top_outer_shell() {
     union() {
         linear_extrude(height = plate_thickness)
-            rounded_rect_2d(outer_size(), outer_corner_radius);
+            case_outer_2d();
 
         translate([0, 0, plate_thickness])
             linear_extrude(height = top_total_height - plate_thickness)
                 difference() {
-                    rounded_rect_2d(outer_size(), outer_corner_radius);
-                    square(opening_size(), center = true);
+                    case_outer_2d();
+                    top_opening_2d();
                 }
     }
 }
@@ -287,6 +454,8 @@ module void40_top() {
             underside_relief_slots_2d();
 
         switch_cutouts_3d();
+        top_mod_button_cutouts_3d();
+        top_mod_joystick_keepout_3d();
         center_mount_holes_3d();
         corner_relief_holes_3d();
     }
@@ -295,12 +464,38 @@ module void40_top() {
 module bottom_shell() {
     difference() {
         linear_extrude(height = bottom_height)
-            rounded_rect_2d(outer_size(), outer_corner_radius);
+            case_outer_2d();
 
         translate([0, 0, bottom_floor_thickness])
             linear_extrude(height = bottom_height - bottom_floor_thickness + 0.01)
-                rounded_rect_2d(bottom_inner_size(), bottom_inner_corner_radius());
+                case_inner_2d(wall = wall_thickness);
     }
+}
+
+module bottom_mod_bump_shell() {
+    if (top_mod_bump_enabled)
+        difference() {
+            linear_extrude(height = bottom_height)
+                top_mod_bump_footprint_2d();
+
+            translate([0, 0, bottom_floor_thickness])
+                linear_extrude(height = bottom_height - bottom_floor_thickness + 0.01)
+                    top_mod_bump_inner_2d(wall = bottom_wall_thickness);
+        }
+}
+
+module bottom_mod_access_opening_3d() {
+    if (top_mod_bump_enabled)
+        translate([
+            top_mod_bump_x_center(),
+            north_edge_y() + bottom_wall_thickness / 2,
+            bottom_height / 2
+        ])
+            cube([
+                top_mod_access_opening_width(),
+                bottom_wall_thickness + 2 * top_mod_bump_south_overlap + 0.5,
+                bottom_height + 0.02
+            ], center = true);
 }
 
 module bottom_posts() {
@@ -313,8 +508,8 @@ module bottom_underlip_support() {
     translate([0, 0, bottom_floor_thickness])
         linear_extrude(height = bottom_height - bottom_floor_thickness)
             difference() {
-                rounded_rect_2d(outer_size(), outer_corner_radius);
-                square(bottom_underlip_inner_size(), center = true);
+                case_outer_2d();
+                case_inner_2d(wall = wall_thickness);
             }
 }
 
@@ -581,8 +776,6 @@ module bottom_core() {
     difference() {
         union() {
             bottom_shell();
-            bottom_underlip_support();
-            bottom_underlip_inner_extensions();
             corner_underlip_gussets();
             bottom_posts();
             corner_bolt_posts();
