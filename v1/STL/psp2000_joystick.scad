@@ -211,6 +211,46 @@ module thumb_cap() {
     }
 }
 
+function psp2000_joystick_stick_center() = stick_center;
+function psp2000_joystick_mount_ear_centers() = mount_ear_centers;
+function psp2000_joystick_body_height() = body_height;
+function psp2000_joystick_flange_thickness() = flange_thickness;
+function psp2000_joystick_overall_height() = overall_height;
+
+module psp2000_joystick_body_envelope(xy_clearance = 0.0, z_clearance = 0.0) {
+    // Hidden mechanical keepout for the module body/contact flange only.
+    // This intentionally excludes the stick shaft/cap because those are handled
+    // by the top faceplate aperture.
+    union() {
+        linear_extrude(height = flange_thickness + z_clearance)
+            flange_2d(delta = xy_clearance);
+
+        translate([0, 0, flange_thickness])
+            linear_extrude(height = body_height - flange_thickness + z_clearance)
+                main_body_2d(delta = xy_clearance);
+
+        // Side terminal keepout.
+        for (x = terminal_ring_x_positions)
+            translate([x, terminal_ring_attach_y - terminal_ring_depth + xy_clearance, terminal_ring_base_z])
+                cube([
+                    terminal_ring_outer[0] + 2 * xy_clearance,
+                    terminal_ring_depth + xy_clearance,
+                    terminal_ring_outer[1] + z_clearance
+                ], center = false);
+
+        translate([
+            terminal_center_tab_x - terminal_center_tab_size[0] / 2 - xy_clearance,
+            terminal_ring_attach_y - terminal_center_tab_depth + xy_clearance,
+            flange_thickness
+        ])
+            cube([
+                terminal_center_tab_size[0] + 2 * xy_clearance,
+                terminal_center_tab_depth + xy_clearance,
+                terminal_center_tab_size[1] + z_clearance
+            ], center = false);
+    }
+}
+
 module psp2000_joystick() {
     difference() {
         union() {

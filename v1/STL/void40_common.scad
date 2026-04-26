@@ -74,6 +74,38 @@ top_mod_access_opening_width_margin = 10.0;
 top_mod_joystick_clearance_xy = 0.45;
 top_mod_joystick_clearance_z = 0.45;
 top_mod_joystick_stick_offset = [1.5, 0];
+top_mod_joystick_rotation = 180;
+// PSP-2000 faceplate references show a clean round/pill aperture for the
+// moving nub, not the full 24 x 18 mm module/contact outline.  Keep this
+// separate from the hidden mechanical/body clearance.
+top_mod_joystick_aperture_d = 16.5;
+
+// PSP joystick bottom mounting.  Option A: printed self-tapping posts.
+bottom_joystick_mount_enabled = true;
+bottom_joystick_mount_post_d = 4.8;
+// Screw access from the exterior bottom.  The printed hole is clearance;
+// the screw bites into / clamps the PSP joystick mounting ring above it.
+bottom_joystick_mount_from_bottom = true;
+bottom_joystick_mount_through_hole_d = 1.85;
+bottom_joystick_mount_counterbore_d = 4.2;
+bottom_joystick_mount_counterbore_h = 1.4;
+// Legacy top-side blind pilot option, used only when from-bottom mounting is off.
+bottom_joystick_mount_pilot_d = 1.45;
+bottom_joystick_mount_pilot_depth = 7.0;
+// Distance from the assembled top underside plane down to the joystick module's
+// underside/flange plane.  This keeps the body below the top plate while the
+// cap/nub rises through the circular aperture.
+bottom_joystick_flange_below_top = 6.5;
+bottom_joystick_body_clearance_xy = 0.60;
+bottom_joystick_body_clearance_z = 0.40;
+// Broad bearing plinth for the 18 x 18 mm body plus thin contact flange.
+// Screws retain it; this solid plinth supports it from the bottom floor and
+// locator ribs reduce XY wiggle.
+bottom_joystick_support_pad_size = [27.0, 21.0];
+bottom_joystick_locator_rib_h = 2.0;
+bottom_joystick_locator_rib_w = 1.2;
+bottom_joystick_locator_clearance = 0.65;
+bottom_joystick_locator_body_size = [18.0, 18.0];
 
 // ---- Bottom approximation ----
 bottom_floor_thickness = 2.4;
@@ -263,6 +295,23 @@ function top_mod_access_opening_width() = max(
 );
 function top_mod_joystick_origin_xy() = top_mod_joystick_center() - top_mod_joystick_stick_offset;
 function top_mod_joystick_origin_z() = -0.01;
+function rotate_2d(p, a) = [
+    p[0] * cos(a) - p[1] * sin(a),
+    p[0] * sin(a) + p[1] * cos(a)
+];
+function top_mod_joystick_part_xy(p) =
+    top_mod_joystick_center()
+    + rotate_2d(p - top_mod_joystick_stick_offset, top_mod_joystick_rotation);
+function top_mod_joystick_mount_positions() = [
+    for (p = psp2000_joystick_mount_ear_centers())
+        top_mod_joystick_part_xy(p)
+];
+function bottom_joystick_mount_top_z() =
+    bottom_top_surface_z(top_mod_controls_y()) - bottom_joystick_flange_below_top;
+function bottom_joystick_support_pad_top_z() = bottom_joystick_mount_top_z();
+function bottom_joystick_support_pad_base_z() = bottom_floor_thickness;
+function bottom_joystick_support_pad_height() =
+    max(bottom_joystick_support_pad_top_z() - bottom_joystick_support_pad_base_z(), 0.01);
 
 module rounded_rect_2d(size = [10, 10], r = 0) {
     if (r <= 0)
@@ -422,13 +471,13 @@ module top_mod_button_cutouts_3d() {
 module top_mod_joystick_keepout_3d() {
     if (top_mod_bump_enabled)
         translate([
-            top_mod_joystick_origin_xy()[0],
-            top_mod_joystick_origin_xy()[1],
-            top_mod_joystick_origin_z()
+            top_mod_joystick_center()[0],
+            top_mod_joystick_center()[1],
+            -0.01
         ])
-            psp2000_joystick_envelope(
-                xy_clearance = top_mod_joystick_clearance_xy,
-                z_clearance = top_mod_joystick_clearance_z
+            cylinder(
+                h = plate_thickness + 0.03,
+                d = top_mod_joystick_aperture_d
             );
 }
 
@@ -548,6 +597,110 @@ module bottom_post_holes() {
         translate([p[0], p[1], hole_floor_z])
             cylinder(h = bottom_height - hole_floor_z + 0.02, d = bottom_post_hole_d);
     }
+}
+
+module bottom_joystick_support_pad() {
+    if (top_mod_bump_enabled && bottom_joystick_mount_enabled)
+        translate([
+            top_mod_joystick_center()[0],
+            top_mod_joystick_center()[1],
+            bottom_joystick_support_pad_base_z()
+        ])
+            rotate([0, 0, top_mod_joystick_rotation])
+                linear_extrude(height = bottom_joystick_support_pad_height())
+                    rounded_rect_2d(bottom_joystick_support_pad_size, 2.0);
+}
+
+module bottom_joystick_locator_ribs() {
+    if (top_mod_bump_enabled && bottom_joystick_mount_enabled) {
+        overlap = 0.08;
+        rib_h = bottom_joystick_locator_rib_h + overlap;
+        rib_z = bottom_joystick_mount_top_z() - overlap;
+        sx = bottom_joystick_locator_body_size[0] / 2 + bottom_joystick_locator_clearance;
+        sy = bottom_joystick_locator_body_size[1] / 2 + bottom_joystick_locator_clearance;
+        rib_len_x = bottom_joystick_locator_body_size[0] * 0.70;
+        rib_len_y = bottom_joystick_locator_body_size[1] * 0.70;
+
+        translate([top_mod_joystick_center()[0], top_mod_joystick_center()[1], rib_z])
+            rotate([0, 0, top_mod_joystick_rotation])
+                union() {
+                    for (y = [-sy, sy])
+                        translate([0, y, rib_h / 2])
+                            cube([
+                                rib_len_x,
+                                bottom_joystick_locator_rib_w,
+                                rib_h
+                            ], center = true);
+
+                    for (x = [-sx, sx])
+                        translate([x, 0, rib_h / 2])
+                            cube([
+                                bottom_joystick_locator_rib_w,
+                                rib_len_y,
+                                rib_h
+                            ], center = true);
+                }
+    }
+}
+
+module bottom_joystick_mount_posts() {
+    if (top_mod_bump_enabled && bottom_joystick_mount_enabled) {
+        post_h = max(bottom_joystick_mount_top_z() - bottom_floor_thickness, 0.01);
+
+        for (p = top_mod_joystick_mount_positions())
+            translate([p[0], p[1], bottom_floor_thickness])
+                cylinder(h = post_h, d = bottom_joystick_mount_post_d);
+    }
+}
+
+module bottom_joystick_mount_holes() {
+    if (top_mod_bump_enabled && bottom_joystick_mount_enabled) {
+        if (bottom_joystick_mount_from_bottom) {
+            for (p = top_mod_joystick_mount_positions()) {
+                // Through clearance hole from the exterior bottom up to the
+                // joystick mounting-ring plane.
+                translate([p[0], p[1], -0.01])
+                    cylinder(
+                        h = bottom_joystick_mount_top_z() + 0.60,
+                        d = bottom_joystick_mount_through_hole_d
+                    );
+
+                // Underside head relief so the screw head can sit below/near
+                // flush with the bottom surface.
+                translate([p[0], p[1], -0.01])
+                    cylinder(
+                        h = bottom_joystick_mount_counterbore_h + 0.02,
+                        d = bottom_joystick_mount_counterbore_d
+                    );
+            }
+        } else {
+            hole_z0 = max(
+                bottom_floor_thickness,
+                bottom_joystick_mount_top_z() - bottom_joystick_mount_pilot_depth
+            );
+            hole_h = bottom_joystick_mount_top_z() - hole_z0 + 0.02;
+
+            for (p = top_mod_joystick_mount_positions())
+                translate([p[0], p[1], hole_z0])
+                    cylinder(h = hole_h, d = bottom_joystick_mount_pilot_d);
+        }
+    }
+}
+
+module bottom_joystick_debug_model() {
+    if (top_mod_bump_enabled && bottom_joystick_mount_enabled)
+        translate([
+            top_mod_joystick_center()[0],
+            top_mod_joystick_center()[1],
+            bottom_joystick_mount_top_z()
+        ])
+            rotate([0, 0, top_mod_joystick_rotation])
+                translate([
+                    -top_mod_joystick_stick_offset[0],
+                    -top_mod_joystick_stick_offset[1],
+                    0
+                ])
+                    psp2000_joystick();
 }
 
 module corner_bolt_posts() {
@@ -778,11 +931,15 @@ module bottom_core() {
             bottom_shell();
             corner_underlip_gussets();
             bottom_posts();
+            bottom_joystick_support_pad();
+            bottom_joystick_locator_ribs();
+            bottom_joystick_mount_posts();
             corner_bolt_posts();
             controller_supports();
         }
 
         bottom_post_holes();
+        bottom_joystick_mount_holes();
         corner_bolt_holes();
         controller_window_3d();
         bottom_top_slope_cut();
